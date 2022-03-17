@@ -1,0 +1,30 @@
+package:
+  name: "funkshuns"
+  version: "0.3.0"
+
+source:
+  git_rev: v0.3.0
+  git_url: https://github.com/openSourcerer9000/funkshuns
+
+requirements:
+  host:
+    - python
+    - setuptools
+  build:
+    - python
+  run:
+    - python
+    - pandas
+    - requests
+    - cython
+
+about:
+  home: https://github.com/openSourcerer9000/funkshuns
+  license: MIT
+  license_familY: MIT
+  license_file: LICENSE
+  summary: "We got the funk, it's in this repo!"
+
+extra:
+  recipe-maintainers:
+    - openSourcerer9000
