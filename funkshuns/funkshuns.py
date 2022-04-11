@@ -29,7 +29,7 @@ def prog(index, total,title='', bar_len=50 ):
     0 <= index < total
     '''
     percent_done = (index)/total*100
-    percent_done = math.ceil(percent_done*10)/10
+    percent_done = np.ceil(percent_done*10)/10
 
     done = round(percent_done/(100/bar_len))
     togo = bar_len-done
@@ -154,7 +154,42 @@ def xl2json(outpth,XLdoc,shtname):
     outjson.write_text(outjson.read_text().replace('NaN','null'))
     print(f'{XLdoc} sheet {shtname} written to {outjson}')
     return outjson
+class htmler:
+    def decapitate(htmlpth):
+        '''
+        return (head,bod)
+        '''
+        starter = lambda haystack,needle: haystack.find(needle)+len(needle)
+        h = htmlpth.read_text()
 
+        #if there's meta/title, skip
+        hstart = max( [starter(h,st) for st in ('<head>','<meta charset="utf-8">','</title>')] )
+        hend = h.find('</head>',hstart)
+        head = h[hstart:hend]
+        assert len(head)>0
+
+        bstart = h.find('<body>',hend)+len('<body>')
+        bend = h.find('</body>',bstart)
+        bod = h[bstart:bend]
+        assert len(bod)>0
+        return (head,bod)
+    def concat(htmls,outhtml):
+        '''
+        Combines the heads/bodies of htmls: list of HTML Paths
+        bounces to outhtml
+        the first html in htmls will be the template (title, etc) and they will be concatenated in order
+        YMMV but seems to work well for plotly/bokeh plots bounced from Python'''
+        guts = [htmler.decapitate(htmlpth) for htmlpth in htmls]
+        heads,bods = list(zip(*guts))
+        res = htmls[0].read_text()
+        assert res.find(heads[0])>0
+        assert res.find(bods[0])>0
+        res = res.replace(heads[0],'\n\n'.join(heads),1)
+        res = res.replace(bods[0],'\n\n'.join(bods),1)
+        outhtml.write_text(res)
+
+        print(f'{htmls}\nconcatenated to\n{outhtml}')
+        
 try:
     import requests
 except Exception as e:
@@ -162,10 +197,11 @@ except Exception as e:
         print('WARNING: ',e)
 
 
-def DL(url,toPth):
+def DL(url,toPth,callback=None):
     '''DL's file from url and places in toPth Path\n
     returns request status code'''
-    print("downloading: ",url)
+    if not callback:
+        print("downloading: ",url)
     if not toPth.exists():
         toPth.mkdir()
     # assumes that the last segment after the / represents the file name
@@ -178,20 +214,38 @@ def DL(url,toPth):
         with open(toPth/file_name, 'wb') as f:
             for data in r:
                 f.write(data)
+    if callback:
+        callback()
     return r.status_code
 
 from multiprocessing.pool import ThreadPool
 
 @timeit
 def DLmulti(urls,toPth,threds=12):
-    results = ThreadPool(threds).starmap(DL, [(url,toPth) for url in urls])
+    toPth.mkdir(parents=True,exist_ok=True)
+    #TODO starmap_async?
+    results = ThreadPool(threds).starmap(DL, 
+        [ 
+            ( url,toPth,prog(i,len(urls),f'Downloading {url}') ) 
+            for i,url in enumerate(urls) 
+            ])
     return list(zip(urls,results))
 
 import zipfile
+import gzip
 @timeit
 def unzipAll(pthOfZips,to1pth=None):
     '''unzips all .zip's in pthOfZips to individual folders\n
     if to1pth: unzip all to Path to1pth instead'''
+    for paf in pthOfZips.glob('*.gz'):
+        if to1pth:
+            to1pth.mkdir(parents=True,exist_ok=True)
+            with gzip.open(paf, 'rb') as f_in:
+                with open(to1pth/paf.name.replace('.gz',''), 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+        else:
+            raise NotImplementedError("unzipAll .gz's to individual paths")
+        
     for paf in pthOfZips.glob('*.zip'):
         print (paf)
         unzipd = paf.parent/paf.stem
@@ -221,6 +275,15 @@ def unzipAll(pthOfZips,to1pth=None):
                     except OSError as e: # this would be "except OSError, e:" before Python 2.6
                         if e.errno != errno.ENOENT: # errno.ENOENT = no such file or directory
                             raise # re-raise exception if a different error occured ```
+
+def DLunzip(urls,toPth,threds=12):
+    '''DLmulti then unzipAll
+    handles .zip or .gz'''
+    zipth = toPth/'zipd'
+    res = DLmulti(urls,zipth)
+    unzipAll(zipth,toPth)
+    shutil.rmtree(zipth)
+    return res
 
 from functools import reduce
 from operator import iconcat
@@ -709,74 +772,3 @@ class xpd():
             # Assume index of existing data frame when appended
             df = df.append(sheet, ignore_index=True)
         return df
-
-class meta():
-    '''metaprogramming utils'''
-    def functionize(file=Path(r'C:\Users\seanm\Desktop\temp')/"Untitled-1.py" ,iniCells=3,argCell=2,src='vscode'):
-        '''Functionizes a .ipynb Exported as executable script (.py)\n
-        iniCells: how many code cells before the function begins\n
-        argCell: which cell to pull args from'''
-        key = '# %%' if src=='vscode' else '# In['
-        tabb = ' '*4
-        def deJpy(lines):
-            '''cleans the jupyter out of Exported as executable scripts (.py)'''
-            p = [line for line in lines if not line.startswith(key)]
-            wspace = []
-            for i in range(len(p)):
-                if not p[i-1:i+1]==['','']:
-                    wspace += [ p[i] ]
-            return wspace
-        # p = file.read_text().split('\n')
-        lines = read(file)
-        lines[6:11]
-        
-        funkstart = findKey(lines,[key]*(iniCells+1))+1
-        ini,funk = lines[:funkstart],lines[funkstart:]
-        ini
-        
-        #del extra whitespace
-        funk = funk[findKey(funk,r'\w+',how='regex'):]
-        funk[:5]
-        
-        ini,funk = [deJpy(lnes) for lnes in (ini,funk)]
-        ini
-        
-        #TODO convention for this? Just big bold docstrings?
-        found = findKey(lines,'#  # ')
-        if found:
-            docstring = "'''" + lines[found].replace('#  # ','') + "'''"
-        else:
-            docstring = "''''''"
-        print(docstring)
-        
-        argstart = findKey(lines,[key]*(argCell-1))+1
-        lines[argstart:]
-        
-        argz = [i for i in ini if i.find('=')>-1]
-        argz
-        
-        argz = [a.split('=')[0] for a in argz]
-        argz
-        
-        splitit = lambda argz: [[a for a in arg.split(' ') if len(a)>0][0] for arg in argz]
-        assert splitit(['arg1 ', 'arg2','   arg3']) == ['arg1', 'arg2','arg3']
-        argz = splitit(argz)
-        argz
-        
-        funk = [f'{tabb}{line}' for line in funk]
-        funk[-5:]
-        
-        funknmer = lambda filestem: filestem.split('_')[-1].split(' ')[0]
-        assert funknmer('w_PC_funk (6)')=='funk'
-        assert funknmer('w_PC_funk')=='funk'
-        funknm = funknmer(file.stem)
-        funknm
-        
-        deff = f"def {funknm}({','.join(argz)}):"
-        deff
-        
-        res = ini+[deff]+[tabb+docstring]+funk+[f'{tabb}return ']
-        res
-        
-        file.write_text('\n'.join(res))
-        print(f'{file} has been functionized')
