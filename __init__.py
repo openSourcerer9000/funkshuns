@@ -7,7 +7,7 @@ __version__ = '0.1.0'
 #drill down to the goods no matter where you're importing from
 if __package__ is None or __package__ == '':
     # uses current directory visibility
-    import funkshuns
+    import funkshuns.funkshuns
 else:
     # uses current package visibility
-    from . import funkshuns
+    from .funkshuns import funkshuns

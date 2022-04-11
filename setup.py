@@ -14,6 +14,7 @@ requirements = [ ]
 
 test_requirements = ['pytest>=3', ]
 
+print('Starting SETUP')
 setup(
     author="Sean Micek",
     author_email='seanrm100@gmail.com',
@@ -43,3 +44,4 @@ setup(
     version='0.1.0',
     zip_safe=False,
 )
+print('Setup COMPLETE')
