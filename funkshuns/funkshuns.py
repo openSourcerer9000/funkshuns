@@ -53,14 +53,14 @@ def workingDir(path):
         yield
     finally:
         os.chdir(prev_cwd)
-def cmder(cmd,*args):
+def cmder(cmd,*ARRGHHHSSSS):
     '''pass to cmd line and print output from py\n
     cmd: str 
     returns time elapsed, TODO allow returns from cmd\n
     TODO kwargs passed to cmd
     https://stackoverflow.com/a/6414278/13030053'''
     thenn = datetime.now()
-    p = subprocess.Popen([cmd,*args], stdout=subprocess.PIPE, bufsize=1)
+    p = subprocess.Popen([cmd,*ARRGHHHSSSS], stdout=subprocess.PIPE, bufsize=1)
     for line in iter(p.stdout.readline, b''):
         print(line.split(b'>')[-1]),
     p.stdout.close()
@@ -73,11 +73,25 @@ def fileBackup(filee,dir='Backup'):
     pthBackup = filee.parent/dir
     if not pthBackup.exists():
         pthBackup.mkdir()
+    if not filee.exists():
+        print(f'WARNING: {filee} doesnt exist to back up')
+        return
     if filee.suffix =='.shp':
         filees = filee.parent.glob(f'{filee.stem}.*')
         [ shutil.copy(filee,pthBackup/filee.name) for filee in filees ]
     else:
         shutil.copy(filee,pthBackup/filee.name)
+def fileRestore(filee,dir='Backup'):
+    bkfilee = filee.parent/dir/filee.name
+    tmpfilee = filee.parent/f'{filee.name}.tmp'
+    
+    shutil.move(bkfilee,tmpfilee)
+    shutil.move(filee,bkfilee)
+    shutil.move(tmpfilee,filee)
+
+    print(f'Backup at \n{bkfilee}\nrestored to \n{filee}.\n\nThe two files have been swapped if you need to recover the previous {filee}')
+
+
 def rem(path):
     """ param <path> could either be relative or absolute. """
     if path.exists():
@@ -231,18 +245,34 @@ def DLmulti(urls,toPth,threds=12):
             ])
     return list(zip(urls,results))
 
+from multiprocessing import Process
+
+def runInParallel(funks):
+    '''funks: {func1:(arg1,arg2),func2:(arg1,)}'''    
+    proc = []
+    for fn in funks.keys():
+        p = Process(target=fn,args=funks[fn])
+        p.start()
+        proc.append(p)
+    for p in proc:
+        p.join()
+
 import zipfile
 import gzip
 @timeit
 def unzipAll(pthOfZips,to1pth=None):
     '''unzips all .zip's in pthOfZips to individual folders\n
     if to1pth: unzip all to Path to1pth instead'''
+
     for paf in pthOfZips.glob('*.gz'):
         if to1pth:
             to1pth.mkdir(parents=True,exist_ok=True)
-            with gzip.open(paf, 'rb') as f_in:
-                with open(to1pth/paf.name.replace('.gz',''), 'wb') as f_out:
-                    shutil.copyfileobj(f_in, f_out)
+            try:
+                with gzip.open(paf, 'rb') as f_in:
+                    with open(to1pth/paf.name.replace('.gz',''), 'wb') as f_out:
+                        shutil.copyfileobj(f_in, f_out)
+            except Exception as e:
+                print('WARNING: ',e,paf)
         else:
             raise NotImplementedError("unzipAll .gz's to individual paths")
         
@@ -285,12 +315,25 @@ def DLunzip(urls,toPth,threds=12):
     shutil.rmtree(zipth)
     return res
 
+def transferAttrs(oneObj,anotherObj='new'):
+    '''transfer all attrs from oneObj to anotherObj which don't start with _\n
+    if anotherObj=='new': creates a dummy obj with the attrs\n
+    \n
+    returns anotherObj'''
+    if anotherObj=='new':
+        anotherObj =  lambda: None
+    [ setattr( anotherObj,atr,getattr(oneObj,atr) ) 
+        for atr in dir(oneObj) if not atr.startswith('_')]
+    return anotherObj
+def attrsToDict(obj,skipWithPrefix='_'):
+    return {atr:getattr(obj,atr) for atr in dir(obj) if not atr.startswith(skipWithPrefix)}
+    
 from functools import reduce
 from operator import iconcat
 def flattenList(listOfLists):
     '''or list of tups'''
     return reduce(iconcat,listOfLists,[])
-def globdown(pth,extensh,lvls):
+def globdown(pth,extensh='.*',lvls=30):
     '''globs "recursively" down (lvls: int) levels\n
     extensh in the form ".ipynb"\n
     pth: Path'''
@@ -341,11 +384,14 @@ def listrip(myList,val,stripFrom=[0,-1]):
 def listEqual(alist):
     '''returns True if every item in alist iterable is equal'''
     return all(alist[i+1] == alist[0] for i in range(len(alist)-1))
-import collections
+try:
+    from collections import Iterable
+except:
+    from collections.abc import Iterable #knuckleheads changing imports up between v's
 def isiter(obj):
     '''True if iterable, False if string type, b'string', (geo)pandas obj, or not iterable'''
     return (
-        isinstance(obj, collections.Iterable) 
+        isinstance(obj, Iterable) 
         and not isinstance(obj, str)
         and not isinstance(obj,bytes)
         and not isinstance(obj,pd.Series)
@@ -489,8 +535,42 @@ from inspect import getargspec
 #                 objref.__setattr__(x,argsvalues.pop(0))
 
 #         return wrapper
-
+from scipy.spatial import KDTree
 class xnp():
+    def ABtree(A,B,maxdist=2):
+        '''literally just KDTree but return -1 for indices > maxdist'''
+        dist,snap = KDTree(A).query(B,distance_upper_bound=maxdist)
+        snap[dist>maxdist] = -1
+        return snap
+    def Atree(A,maxdist=2):
+        '''KDtree of an array on itself, without matching a row to itself\n
+        dist above maxdist returned as -1'''
+        dist,snap = KDTree(A).query(A,k=2,distance_upper_bound=maxdist)
+        snap[dist>maxdist] = -1
+        dist
+        snp = pd.DataFrame(snap,index=np.arange(len(snap)))
+        snp
+        snp = snp.replace(-1,np.nan)
+        snp
+        snp.loc[snp[0]==snp.index,0]=np.NaN
+        snp.loc[snp[1]==snp.index,1]=np.NaN
+        snp
+        fild = snp[0].fillna(snp[1])
+        fild
+        snapped = fild.fillna(-1).astype(np.int64).to_numpy()
+        snapped
+        return snapped
+    def KDTreee(A,B,maxdist=2):
+        '''handles case where A and B are identical, in which case does a
+        KDtree of an array on itself, without matching a row to itself\n
+        returns -1 for indices > maxdist
+        '''
+        if (A==B).all():
+            snap = xnp.Atree(A,maxdist)
+        else:
+            snap = xnp.ABtree(A,B,maxdist)
+        return snap
+
     def find_nearest(array, value):
         '''NOT TESTED
         https://stackoverflow.com/questions/2566412/find-nearest-value-in-numpy-array'''
@@ -520,8 +600,107 @@ class xnp():
             return np.where(mask, vs[idx], ar)
         else:
             return vs[idx]
+from scipy.interpolate import interp1d
 class xpd():
     '''Handy tools for pandas'''
+    class prof(pd.Series):
+        '''Extension of pd.Series where indexing interpolates
+        linearly when the indexer is not exact
+        \n 
+        both index and value should be floats/ints'''
+        def __getitem__(self,i):
+            # TODO update func whenever values update
+            # self.__getitem__ = interp1d(self.index.to_numpy(),self.to_numpy())
+            f = interp1d(self.index.to_numpy(),self.to_numpy())
+            return float(f(i))
+
+    def asDF(DForCSVorXLSX,**kwargs):
+        '''returns DF from whatever input is\n
+        if not already df,**kwargs get passed to pd.read_csv or pd.read_excel\n
+        TODO hdf group'''
+        df = DForCSVorXLSX
+        if isinstance(df,pd.DataFrame):
+            return df.copy()
+        elif isinstance(df,PurePath):
+            ext = df.suffix.replace('.','',1)
+            if ext=='csv':
+                return pd.read_csv(df,**kwargs)
+            elif ext.startswith('x'):
+                return pd.read_excel(df,**kwargs)
+            elif ext == "tsv":
+                return pd.read_csv(df, sep="\t",**kwargs)
+            elif ext in ["parquet", "pq", "parq"]:
+                return pd.read_parquet(df,**kwargs)
+            else:
+                raise NotImplementedError(f"Unsupported file type {ext}. Should be one of csv, tsv, parquet, or xlsx.")
+        else:
+            raise NotImplementedError(f"Unsupported type {type(df)}. Only file path / existing df supported at this time")
+    
+    def weightedAvg(df,w8col):
+        '''returns the weighted average of cols in df grouped by df.index lvl 0\n
+        w8col is the weighting to use for each item within each unique lvl0\n
+        w8col and any indices beyond lvl 0 get dropped in the result\n\n
+        
+        lvl0 of df.index is the idx to aggregate by, 
+        any further idx lvls will disappear in the aggregation\n
+        ie preprocess with:\n
+        df = df.set_index(['lvl0','lvl1']).sort_index()\n
+        where there are multiple lvl1's per lvl0, and lvl1 is the idx of individual items to agg
+        '''
+        def _weightedAvg(df,w8col):
+            # print('avg')
+            tot = df.groupby(level=0).sum()[w8col]
+            tot.name = 'tot'
+            tot
+            df = df.merge(tot,on=df.index.names[0])
+            cols = df.columns[~df.columns.isin([w8col,'tot'])].to_list()
+
+            df[cols] = df[cols].mul(df[w8col],axis=0).div(df['tot'],axis=0)
+            df = df.groupby(level=0)[cols].sum()
+            return df
+        def _weightedAvgNaNs(df,w8col):
+            '''slow af but handles NaNs correctly'''
+            # print('slowwww')
+            cols = df.columns.drop(w8col).to_list()
+
+            def _maskAvg(grup):
+                # print(grup,'\n')
+                allna = grup.isna().all()
+                nacols = allna.index[allna].to_list()
+                
+                grup = grup.dropna(how='all',axis=1)
+                ccols = [c for c in cols if c not in nacols]
+                data = np.ma.average(np.ma.array(grup[ccols].values, mask=grup[ccols].isnull().values), 
+                        weights=grup[w8col].values, axis=0).data
+                grup = grup.iloc[[0]]
+                grup.loc[:,ccols] = data
+                return grup
+            grupd = df.groupby(level=0).apply(_maskAvg)
+            grupd.index = grupd.index.get_level_values(0)
+            return grupd[cols]
+        
+        if df[w8col].isna().any():
+            raise NotImplementedError(f'to intelligently handle when w8col has nulls\n{df[df[w8col].isna()]}')
+
+        if df.isna().any().any():
+            grupd = _weightedAvgNaNs(df,w8col)
+        else: #quicker
+            grupd = _weightedAvg(df,w8col)
+
+        minOK = df.drop(w8col,axis=1).min()<=grupd.min()+0.00001
+        assert minOK.all(),f'the following cols got screwed up: \n{grupd.min()[~minOK]} > {df[~minOK].min()}'
+
+        return grupd
+
+    def tsGaps(dtIndex_ts,freq='H'):
+        '''    #The complete timeseries record needed\n
+        fullts = pd.date_range(ts.min(),ts.max(),freq=freq)\n
+        gaps = fullts[~fullts.isin(ts)]'''
+        ts =dtIndex_ts
+        #The complete timeseries record needed
+        fullts = pd.date_range(ts.min(),ts.max(),freq=freq)
+        gaps = fullts[~fullts.isin(ts)]
+        return gaps
     def fromNestedDict(data):
         '''https://stackoverflow.com/questions/33611782/pandas-dataframe-from-nested-dictionary
         https://towardsdatascience.com/all-pandas-json-normalize-you-should-know-for-flattening-json-13eae1dfb7dd
@@ -610,6 +789,11 @@ class xpd():
         except Exception as e:
             print(f'WARNING: {e} while unbyting {hdf}, resuming')
         return df
+    def readhdfAttrs(hdfattrs):
+        '''hdfattrs: h5py.File(HDFpth)['table'].attrs'''
+        Attrs = pd.Series(hdfattrs)
+        Attrs = Attrs.map(lambda b:b.decode('utf-8') if isinstance(b,np.bytes_) else b)
+        return Attrs
     def drop_y(df,suff='_y'):
         '''in place- list comprehension of the cols that end with '_y'''
         to_drop = [x for x in df if x.endswith(suff)]
@@ -639,6 +823,36 @@ class xpd():
             assert False, 'Untested case'
         else:
             return res
+    def plotPctNotNull(df):
+        '''
+        bar chart percent of columns with data
+        '''
+        chem_var_na = df.isna().sum(axis=0).T
+
+        fig, ax = plt.subplots()
+        # modify the default figure size
+        fig.set_size_inches(10,40)
+        # create the ticks for a horizontal bar plot
+        ticks = np.arange(len(chem_var_na))
+        # bar plot of percent not NaN
+        ax.barh(ticks,
+            100-100*(chem_var_na/float(nsample)))
+        # set labels for y-axis
+        ax.set_yticks(ticks)
+        ax.set_yticklabels(chem_var_na.index,fontdict={'fontsize':10})
+        # adjust y-axis limits
+        ax.set_ylim(-1,len(chem.columns))
+        # invert y-axis so meta-data is at the bottom
+        ax.invert_yaxis
+        # change x-axis limits
+        ax.set_xlim(0,100)
+        # set title
+        ax.set_title('GW chemistry SA:\n{} samples'.format(nsample))
+        # set x axis label
+        ax.set_xlabel('Percent samples with data')
+        # add grid
+        return ax.grid()
+
     def consol(df,grupby=None,pivotCols=None,lvl=None,ND=False,how='list'):
         '''pd prefix-consolidate rows, merge dup values together as lists (or specified how='function')\n
         can pass either a col index, a list of col 'names', etc to grupby (i think)\n
