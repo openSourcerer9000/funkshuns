@@ -1,0 +1,88 @@
+Plan: '100-yr' (Dickinson_Bayou.p01)
+Simulation started at: 09Jun2020 04:55:55 PM
+
+Writing Geometry
+DB_Inner_Area: Mesh property tables are current.
+DB_Outer_Area: Mesh property tables are current.
+Completed Writing Geometry
+	
+Geometric Preprocessor HEC-RAS 5.0.7 March 2019
+           42 Internal Boundary curve(s) have been read in
+
+Finished Processing Geometry
+
+Starting to copy Geometry Data to Results
+Completed copying Geometry Data to Results
+
+
+Performing Unsteady Flow Simulation  HEC-RAS 5.0.7 March 2019
+
+ERROR with Connection(s)
+
+The Lateral Structure at  Dickinson Bayou DB100_09 83552.95
+
+has a weir elevation lower than the cells they are connected to
+for 2D Area DB_Outer_Area
+This is not allowed in HEC-RAS:
+
+Riv Sta	Weir Sta	Weir Elv	Cell	Cell Elv	    Face Points
+Dickinson Bayou DB100_09 83552.95	   126.32	   20.089	  275833	   20.369	  311011    311010
+The Lateral Structure at  Dickinson Bayou DB100_09 75074.95
+
+has a weir elevation lower than the cells they are connected to
+for 2D Area DB_Outer_Area
+This is not allowed in HEC-RAS:
+
+Riv Sta	Weir Sta	Weir Elv	Cell	Cell Elv	    Face Points
+Dickinson Bayou DB100_09 75074.95	  1437.36	   15.904	  275925	   15.969	  311111    311112
+The Lateral Structure at  Dickinson Bayou DB111_01 2775.95
+
+has a weir elevation lower than the cells they are connected to
+for 2D Area DB_Inner_Area
+This is not allowed in HEC-RAS:
+
+Riv Sta	Weir Sta	Weir Elv	Cell	Cell Elv	    Face Points
+Dickinson Bayou DB111_01 2775.95	   413.47	   15.923	    6533	   15.953	    7748      7749
+The Lateral Structure at  Dickinson Bayou DB100_07 65651.95
+
+has a weir elevation lower than the cells they are connected to
+for 2D Area DB_Outer_Area
+This is not allowed in HEC-RAS:
+
+Riv Sta	Weir Sta	Weir Elv	Cell	Cell Elv	    Face Points
+Dickinson Bayou DB100_07 65651.95	  1120.16	   14.988	  276008	   15.045	  311197    311198
+The Lateral Structure at  Dickinson Bayou DB100_03 25622.95
+
+has a weir elevation lower than the cells they are connected to
+for 2D Area DB_Outer_Area
+This is not allowed in HEC-RAS:
+
+Riv Sta	Weir Sta	Weir Elv	Cell	Cell Elv	    Face Points
+Dickinson Bayou DB100_03 25622.95	   925.78	   10.063	  276852	   10.154	  312111    312112
+The Lateral Structure at  Gum Bayou GB100_06 6281.95
+
+has a weir elevation lower than the cells they are connected to
+for 2D Area DB_Outer_Area
+This is not allowed in HEC-RAS:
+
+Riv Sta	Weir Sta	Weir Elv	Cell	Cell Elv	    Face Points
+Gum Bayou GB100_06 6281.95	   537.88	   10.025	  274130	   10.039	  309240    309241
+The Lateral Structure at  Gum Bayou GB100_06 2142.95
+
+has a weir elevation lower than the cells they are connected to
+for 2D Area DB_Outer_Area
+This is not allowed in HEC-RAS:
+
+Riv Sta	Weir Sta	Weir Elv	Cell	Cell Elv	    Face Points
+Gum Bayou GB100_06 2142.95	  1067.62	    8.692	  274176	    8.728	  309286    309287
+ 
+Error starting unsteady simulation - Stopping compute process
+ 
+
+Computations Summary
+
+Computation Task	Time(hh:mm:ss)
+Completing Geometry(64)	       2
+Preprocessing Geometry(64)	       1
+Unsteady Flow Computations(64)	       2
+Complete Process	       8

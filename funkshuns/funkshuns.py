@@ -12,6 +12,8 @@ import json
 import subprocess
 printImportWarnings = False
 
+regxASCII = "[^\W\d_]+"
+
 def timeit(func):
     def wrapper(*args, **kwargs):
         nowe = datetime.now()
@@ -81,6 +83,7 @@ def fileBackup(filee,dir='Backup'):
         [ shutil.copy(filee,pthBackup/filee.name) for filee in filees ]
     else:
         shutil.copy(filee,pthBackup/filee.name)
+    print(f'{filee} backed up to {pthBackup}')
 def fileRestore(filee,dir='Backup'):
     bkfilee = filee.parent/dir/filee.name
     tmpfilee = filee.parent/f'{filee.name}.tmp'
@@ -203,6 +206,90 @@ class htmler:
         outhtml.write_text(res)
 
         print(f'{htmls}\nconcatenated to\n{outhtml}')
+
+    def ipyToHTML(ipy,outhtml,title=None,sitepth=None,
+        bgcolor='#b0c6cf',stylee='default'):
+        '''
+        bounces jupyter notebook ipy to outhtml\n
+        title replaces filename and html title\n
+        if sitepth, save as sitepth/index.html too
+        '''
+        if not title:
+            title=ipy.stem
+        cmder('jupyter','nbconvert',str(ipy),'--no-input','--no-prompt','--to html')
+        
+        # rem blank cells
+        tekst = outhtml.read_text(encoding='utf-8')
+        tekst=tekst.replace('''<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs jp-mod-noInput ">
+        
+        </div>''','')
+        
+        tekst=tekst.replace(f'<title>{ipy.stem}',f'<title>')
+        
+        tekst=tekst.replace('.dataframe','''    .dataframe {
+        
+            font-size: 15px !important;
+            margin: auto !important;
+            }
+            .dataframe''',1)
+        
+        #unwhiten
+        tekst=tekst.replace('#ffffff',bgcolor)
+
+        if stylee=='default':
+            stylee = '''
+                <style>
+                    h1 {
+                    text-align:center;
+                    }
+                    body {
+                        font-family: 'Roboto';
+                        line-height: 1.3em;
+                        background-color: '''+bgcolor+'''!important;
+                    }
+                    p {
+                        padding:0%;
+                        font-size:20px !important;
+                        margin:2em 8% 0 8% !important;
+                    }
+                </style>'''
+        
+        key = '</style>'
+        
+        filee = outhtml
+        putHere = tekst.rfind(key)
+        filee.write_text(tekst[:putHere]+f'{key}\n\n'+stylee+tekst[putHere+len(key):] 
+            ,encoding='utf-8')
+        
+        # tekst = outhtml.read_text(encoding='utf-8')
+        # stylee='''    .dataframe {
+        
+        #       font-size: 18px !important;
+        #       margin: auto !important;
+        #     }
+        #     .dataframe'''
+        # key='.dataframe'
+        
+        # putHere = tekst.find(key)
+        # filee.write_text(tekst[:putHere]+f'{key}\n\n'+stylee+tekst[putHere+len(key):] 
+        #     ,encoding='utf-8')
+        
+        #rem plotly logo
+        lines = txt.read(outhtml)
+        key1 = '<div class="logo-block">'
+        lines = lines[:txt.findKey(lines,key1)] + lines[txt.findKey(lines,[key1,'</div>'])+1:]
+        
+        txt.write(outhtml,lines)
+        
+        outhtml=shutil.move(outhtml,outhtml.parent/f'{title}.html')
+        
+        cmder(f"{str(outhtml)}")
+        
+        if sitepth:
+            shutil.copy(outhtml,sitepth/'index.html')
+            cmder('code',f"{str(sitepth)}")
+
+        return outhtml
         
 try:
     import requests
@@ -245,17 +332,21 @@ def DLmulti(urls,toPth,threds=12):
             ])
     return list(zip(urls,results))
 
-from multiprocessing import Process
+from multiprocessing import Process,freeze_support
 
 def runInParallel(funks):
-    '''funks: {func1:(arg1,arg2),func2:(arg1,)}'''    
+    '''funks: [ ( func1,(arg1,arg2) ) , ( func2,(arg1,) ) ]\n
+    uses multiprocessing.Process\n
+    WARNING: Does NOT work from ipynb's'''    
+    freeze_support()
     proc = []
-    for fn in funks.keys():
-        p = Process(target=fn,args=funks[fn])
+    for fn,argz in funks:
+        p = Process(target=fn,args=argz)
         p.start()
         proc.append(p)
     for p in proc:
         p.join()
+    return 'done'
 
 import zipfile
 import gzip
@@ -327,7 +418,11 @@ def transferAttrs(oneObj,anotherObj='new'):
     return anotherObj
 def attrsToDict(obj,skipWithPrefix='_'):
     return {atr:getattr(obj,atr) for atr in dir(obj) if not atr.startswith(skipWithPrefix)}
-    
+
+def bold(text):
+    '''for plots'''
+    return f'<b>{text}</b>'
+
 from functools import reduce
 from operator import iconcat
 def flattenList(listOfLists):
@@ -497,7 +592,11 @@ def mbox(text, title='', style=0):
 def getinitboiler(args_st):
     s = [f'self.{st}' for st in args_st.split(',')]
     print(f'{",".join(s)} = {args_st}')
-from inspect import getargspec
+try:
+    from inspect import getargspec
+except: #py 3.11
+    from inspect import getfullargspec
+    getargspec=getfullargspec
 # class autoinit(type):
 #     '''Passes all args to self.\n
 #     WARNING: doesn't work for kwargs\n
@@ -613,6 +712,52 @@ class xpd():
             # self.__getitem__ = interp1d(self.index.to_numpy(),self.to_numpy())
             f = interp1d(self.index.to_numpy(),self.to_numpy())
             return float(f(i))
+    # class profDF(pd.DataFrame):
+    #     '''Extension of pd.Series where indexing interpolates
+    #     linearly when the indexer is not exact
+    #     \n 
+    #     both index and value should be floats/ints'''
+    #     def __getitem__(self,i):
+    #         # TODO update func whenever values update
+    #         # self.__getitem__ = interp1d(self.index.to_numpy(),self.to_numpy())
+    #         f = interp1d(self.index.to_numpy(),self.to_numpy())
+    #         return float(f(i))
+
+    # def alignIdxes(DFs):
+    #     dfs = [df.copy() for df in DFs]
+    #     TODO dfprof instead
+    #     # convert all to series
+    #     dfs = [ df[df.columns[0]] if isinstance(df,pd.DataFrame) 
+    #         else df
+    #             for df in dfs ]
+
+    #     dfs = [xpd.prof()]
+    #     crc = xpd.prof(crc.maxwsel)
+    #     crc
+    #     idx = pd.concat([dsc,vary,crc]).index.unique().sort_values().to_list()
+    #     len(idx)
+    #     dfs = [dsc,vary,crc]
+    #     bnds = pd.DataFrame([ [df.index[0],df.index[-1]]
+    #                         for df in dfs ],columns=['mn','mx']
+    #                     )
+    #     bnds
+    #     minn,maxx = bnds.mn.max(),bnds.mx.min()
+    #     minn,maxx
+    #     idx = [ i for i in idx if i>minn and i<maxx ]
+    #     len(idx)
+    #     dfs = [
+    #         pd.Series(dict(zip(idx,[ df[i] for i in idx ])))
+    #         for df in dfs ]
+    #     dfs[0]
+    #     assert listEqual([df.index.to_list() for df in dfs])
+    #     dsc,vary,crc = dfs
+    #     100*(dsc.corr(crc) - vary.corr(crc))/vary.corr(crc)
+    #     vary.corr(crc)
+    #     bnds.shape
+    #     xxr.pctBias(dsc.values,crc.values)
+    #     xxr.pctBias(vary.values,crc.values)
+    #     xxr.RMSE(dsc.values,crc.values)
+    #     xxr.RMSE(vary.values,crc.values)
 
     def asDF(DForCSVorXLSX,**kwargs):
         '''returns DF from whatever input is\n
@@ -691,7 +836,30 @@ class xpd():
         assert minOK.all(),f'the following cols got screwed up: \n{grupd.min()[~minOK]} > {df[~minOK].min()}'
 
         return grupd
+    def lastNrowsEqual(df,n,conds=None):
+        '''
+        returns bool df of whether the last n rows have all been equal for each col\n
+        conds: list of any additional bool df's you would like to check for\nex:\n
+        nodata = lastNrowsEqual(gauge,5,conds = gauge!=gauge.min())\n
+        gauge[~nodata]\n
+        '''
+        samesies = [ df.shift(i+1) == df.shift(i)
+                                    for i in range(n) ]
 
+        # & ( gauge.shift(2) == gauge.shift(1)) & (gauge.shift(1) == gauge)  & (gauge!=gauge.min())
+        
+        # nodata
+        if conds is not None:
+            samesies += asList(conds)
+
+        df = pd.concat(samesies,axis=1,keys=range(len(samesies)))
+        df
+        df = df.swaplevel(axis=1)
+        df
+        df = df.T.sort_index().T
+        df
+        nodata = df.T.groupby(level=0).all().T
+        return nodata
     def tsGaps(dtIndex_ts,freq='H'):
         '''    #The complete timeseries record needed\n
         fullts = pd.date_range(ts.min(),ts.max(),freq=freq)\n
@@ -775,7 +943,8 @@ class xpd():
         for col in str_df:
             df[col] = str_df[col]
         return df
-    def readhdf(hdf):
+
+    def readhdf(hdf,fillvalue=-9999):
         '''hdf: h5py HDF table\n
         returns as pd df\n
         removes pesky b'strings' when applicable'''
@@ -788,7 +957,59 @@ class xpd():
             df[bcols] = df[bcols].applymap(lambda x: x.decode('utf-8'))
         except Exception as e:
             print(f'WARNING: {e} while unbyting {hdf}, resuming')
+        df = df.replace({fillvalue:np.NaN})
         return df
+    def tohdf(DF,HDFparentGroup,HDFdsName,attrz=None,fillvalue=-9999):
+        '''because pd.to_hdf() SUCKS!\n
+        HDFparentGroup: h5py Group\n
+        HDFgroupName: str, name of new table to add in HDf parent group\n
+        returns HDFparentGroup[HDFgroupName]'''
+        df = DF.copy()
+
+        if df.columns.dtype=='O':
+            df.columns=df.columns.str.replace('/','-') #TODO more illegal chars? replcaemulti
+        
+        df = df.fillna(fillvalue)
+        
+        #encode str to bytes
+        bcols = [ col for col in df.columns if isinstance(df[col].iloc[0], str) ]
+        testbcols = [ col for col in df.columns if isinstance(df[col].iloc[-1], str) ]
+        assert bcols==testbcols
+        df[bcols] = df[bcols].applymap(lambda x: x.encode('utf-8')).astype('bytes')
+
+        if isinstance(df.columns,pd.RangeIndex): #no col names
+            arr = df.values
+        else:
+            # extract column names and dtypes to create the recarray dtype
+            arr_dt = []   
+            for col in df.columns:
+                arr_dt.append( (col, df[col].dtype) )   
+
+            # create an empty recarray based on Pandas dataframe row count and dtype
+            arr = np.empty( (len(df),), dtype=arr_dt )
+
+            # load dataframe column values into the recarray fields
+            for col in df.columns:
+                arr[col] = df[col].values
+
+        # write to file
+        if HDFdsName in HDFparentGroup.keys():
+            del HDFparentGroup[HDFdsName]
+        HDFparentGroup.create_dataset(HDFdsName,data=arr)
+            # throws err if ds is not the same size:
+            # HDFparentGroup[HDFdsName][:] = arr
+
+        tbl = HDFparentGroup[HDFdsName]
+        if attrz:
+            tbl.attrs.update(attrz)
+        return tbl
+    def tohdfFile(DF,HDFfile,pathToParentGroup,HDFdsName):
+        '''tohdf but with unopen! HDF file Path specified\n
+        xpd.tohdfFile(df,hdfFile,"/Geometry/Land Cover (Manning's n)",'Calibration Table')
+        '''
+        with h5py.File(HDFfile,'r+') as hdf:
+            xpd.tohdf(DF,hdf[pathToParentGroup],HDFdsName)
+
     def readhdfAttrs(hdfattrs):
         '''hdfattrs: h5py.File(HDFpth)['table'].attrs'''
         Attrs = pd.Series(hdfattrs)
@@ -986,3 +1207,77 @@ class xpd():
             # Assume index of existing data frame when appended
             df = df.append(sheet, ignore_index=True)
         return df
+    
+try:
+    import xarray as xr
+except Exception as e:
+    if printImportWarnings:
+        print('WARNING: ',e)
+try:
+    import zarr
+except Exception as e:
+    if printImportWarnings:
+        print('WARNING: ',e,'Zarr is an optional dependency')
+class xxr:
+    def RMSE(y_true,y_sim,dim=None,normed=True):
+        ''' ## Root Mean Squared Error\n
+        \mathrm{RMSD} = \sqrt{\frac{\sum_{i=1}^{N}\left(x_{i}-\hat{x}_{i}\right)^{2}}{N}}\n\n
+        - y_true	=	actual observations time series
+        - y_sim	=	estimated time series\n
+        - N	=	number of non-missing data points
+        y_true,y_sim: xr da's or np arrays of true/observed values vs simulated/predicted\n
+        normed: whether to normalize to percentage of y_true:\n
+        RMSE*( N / y_sim.sum() ) \n\n
+        dim='t', named xr da dim to aggregate along
+        '''
+        dimm = {'dim':dim} if dim else {}
+        rms = np.sqrt(np.square( y_sim - y_true ).mean(**dimm))
+        if normed:
+            # rms = rms*y_true.count(**dimm)/y_true.sum(**dimm)
+            rms = rms/np.abs(y_true.mean(**dimm))
+            
+        return rms
+    def pctBias(y_true,y_sim,dim=None,asPct=False):
+        ''' ## Percent Bias
+        - y_true	=	actual observations time series
+        - y_sim	=	estimated time series\n
+        y_true,y_sim: xr da's or np arrays of true/observed values vs simulated/predicted\n
+        dim='t', named xr da dim to aggregate along\n
+        returns as ratio unless aspct (multiply by 100 to get percent)\n
+        '''
+        dimm = {'dim':dim} if dim else {}
+        pct = 100 if asPct else 1
+        pb = pct*(y_sim.mean(**dimm) - y_true.mean(**dimm)) / y_true.mean(**dimm)
+        return pb
+
+    def errMetricTrio(y_true,y_sim,dim=None,
+        # RMSE_normed=True,pctBias_asPct=False
+        ):
+        '''cor,rmse,pb = [ funk(**kwargz)  for funk in (xr.corr,xxr.RMSE,xxr.pctBias) ]'''
+        kwargz = {'dim':dim} if dim else {}
+        # corr = xr.corr if dim else np.correlate
+        # metrix = [ funk(y_true,y_sim,**kwargz)  for funk in (corr,xxr.RMSE,xxr.pctBias) ]
+        metrix = [ funk(y_true,y_sim,**kwargz)  for funk in (xr.corr,xxr.RMSE,xxr.pctBias) ]
+        trio = xr.Dataset(dict(zip(['cor','rmse','pb'],metrix)))
+        return trio
+    def to_file(ds,outFile,complevel=5,driver='inferFromExtension'):
+        '''
+        bounce to .nc or .zarr at compression level complevel
+        '''
+        if outFile.name.split('.')[-1] == 'nc' or driver.lower() in {'netcdf','netcdf4','nc'}:
+            print('Writing to NetCDF4')
+            compr = dict(zlib=True, complevel=complevel)
+            encoding = encoding = {ds.name: compr} if isinstance(ds,xr.DataArray) \
+                else {var: compr for var in ds.data_vars}
+            ds.to_netcdf(outFile, encoding=encoding)
+            print(f'Successfully bounced to {outFile}')
+        
+        elif outFile.name.split('.')[-1] == 'zarr' or driver.lower()=='zarr':
+            print('Writing to Zarr')
+            compr = {'compressor':
+                zarr.Blosc(cname="zstd", clevel=7, shuffle=2) }
+
+            encoding = encoding = {ds.name: compr} if isinstance(ds,xr.DataArray) \
+                else {var: compr for var in ds.data_vars}
+            ds.to_zarr(outFile, encoding=encoding)
+            print(f'Successfully bounced to {outFile}')
