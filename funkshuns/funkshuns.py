@@ -298,7 +298,7 @@ except Exception as e:
         print('WARNING: ',e)
 
 
-def DL(url,toPth,callback=None):
+def DL(url,toPth,filename='infer',callback=None):
     '''DL's file from url and places in toPth Path\n
     returns request status code'''
     if not callback:
@@ -307,8 +307,11 @@ def DL(url,toPth,callback=None):
         toPth.mkdir()
     # assumes that the last segment after the / represents the file name
     # if url is abc/xyz/file.txt, the file name will be file.txt
-    file_name_start_pos = url.rfind("/") + 1
-    file_name = url[file_name_start_pos:]
+    if filename=='infer':
+        file_name_start_pos = url.rfind("/") + 1
+        file_name = url[file_name_start_pos:]
+    else:
+        file_name=filename
 
     r = requests.get(url, stream=True)
     if r.status_code == requests.codes.ok:
@@ -322,13 +325,19 @@ def DL(url,toPth,callback=None):
 from multiprocessing.pool import ThreadPool
 
 @timeit
-def DLmulti(urls,toPth,threds=12):
+def DLmulti(urls,toPth,filenames='infer',threds=12):
+    '''DL multi async\n
+    will infer filenames if filenames=='infer', otherwise
+    must specify a list of len(urls) of file names with suffix, to download to toPth
+    '''
     toPth.mkdir(parents=True,exist_ok=True)
     #TODO starmap_async?
+    fnames = ['infer']*len(urls) if filenames=='infer' else filenames
     results = ThreadPool(threds).starmap(DL, 
         [ 
-            ( url,toPth,prog(i,len(urls),f'Downloading {url}') ) 
-            for i,url in enumerate(urls) 
+            ( url,toPth,fname,
+                prog(i,len(urls),f'Downloading {url}') ) 
+            for i,(url,fname) in enumerate(zip(urls,fnames)) 
             ])
     return list(zip(urls,results))
 
