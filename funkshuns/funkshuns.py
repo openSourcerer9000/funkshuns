@@ -297,7 +297,14 @@ except Exception as e:
     if printImportWarnings:
         print('WARNING: ',e)
 
-
+def URLfromParams(baseURL,params):
+    '''returns URL with params for API calls etc given\n
+    params: urlparams as dict\n
+    baseURL: str'''
+    return baseURL + '?' + \
+        '&'.join(
+            [f'{key}={val}' for key,val in params.items()]
+        )
 def DL(url,toPth,filename='infer',callback=None):
     '''DL's file from url and places in toPth Path\n
     returns request status code'''
@@ -968,11 +975,12 @@ class xpd():
             print(f'WARNING: {e} while unbyting {hdf}, resuming')
         df = df.replace({fillvalue:np.NaN})
         return df
-    def tohdf(DF,HDFparentGroup,HDFdsName,attrz=None,fillvalue=-9999):
+    def tohdf(DF,HDFparentGroup,HDFdsName,attrz=None,fillvalue=-9999,**kwargs):
         '''because pd.to_hdf() SUCKS!\n
         HDFparentGroup: h5py Group\n
         HDFgroupName: str, name of new table to add in HDf parent group\n
-        returns HDFparentGroup[HDFgroupName]'''
+        returns HDFparentGroup[HDFgroupName]\n
+        **kwargs passed to HDFparentGroup.create_dataset() ie chunks=(chunksize0,chunksize1)'''
         df = DF.copy()
 
         if df.columns.dtype=='O':
@@ -1004,7 +1012,7 @@ class xpd():
         # write to file
         if HDFdsName in HDFparentGroup.keys():
             del HDFparentGroup[HDFdsName]
-        HDFparentGroup.create_dataset(HDFdsName,data=arr)
+        HDFparentGroup.create_dataset(HDFdsName,data=arr,**kwargs)
             # throws err if ds is not the same size:
             # HDFparentGroup[HDFdsName][:] = arr
 
