@@ -11,8 +11,16 @@ import math
 import json
 import subprocess
 printImportWarnings = False
+try:
+    from tqdm import tqdm
+except Exception as e:
+    print(f'WARNING: {e}')
 
 regxASCII = "[^\W\d_]+"
+plotlystrftime = '%Y-%m-%d %X' # for plotly timestamps
+
+def GB(b):
+    return b*9.3132257461548E-10 
 
 def timeit(func):
     def wrapper(*args, **kwargs):
@@ -42,8 +50,45 @@ def prog(index, total,title='', bar_len=50 ):
     
     emoji = '⏳' if (round(percent_done) < 100) else '✅'
     print(f'\t{emoji}{title}: [{done_str}{togo_str}] {percent_done}% done', end='\r')
+def progbar(func):
+    '''decorator\n
+    prints prog(iprog,itot) when iprog,itot added to func kwargs'''
+    def wrapper(*args,iprog=None,itot=None, **kwargs):
+        # before
+        if iprog:
+            prog(iprog,itot)
 
+        ret = func(*args, **kwargs)
+        return ret
+    return wrapper
 import contextlib
+
+def benchmark(funk,argz):
+    '''
+    Benchmark \n
+    funk: function to benchmark \n
+    argz=[(),()]
+    '''
+    argzs = argz[:]
+    if not isiter(argzs[0]):
+        argzs = [ (argz,) for argz in argzs]
+
+    def bmark(argz):
+        print(f'Args: {argz}')
+
+        start = datetime.now()
+        res = funk(*argz)
+        end = datetime.now()
+
+        t = (end - start).total_seconds()
+        print(f'Time: {t} s\n')
+        return t
+    times = [bmark(argz) for argz in tqdm(argzs) ]
+    print(f'{argzs[ np.argmin(times) ]}\nis the fastest')
+    return times
+    
+
+red = '\033[91m' 
 
 @contextlib.contextmanager
 def workingDir(path):
@@ -62,15 +107,50 @@ def cmder(cmd,*ARRGHHHSSSS):
     TODO kwargs passed to cmd
     https://stackoverflow.com/a/6414278/13030053'''
     thenn = datetime.now()
-    p = subprocess.Popen([cmd,*ARRGHHHSSSS], stdout=subprocess.PIPE, bufsize=1)
+    ARRGHHHSSSS = [str(arg) for arg in ARRGHHHSSSS]
+    p = subprocess.Popen([cmd,*ARRGHHHSSSS],
+         stdout=subprocess.PIPE,stderr=subprocess.PIPE, bufsize=1)
     for line in iter(p.stdout.readline, b''):
         print(line.split(b'>')[-1]),
     p.stdout.close()
+    for line in iter(p.stderr.readline, b''):
+        print(f"{red}{line.split(b'>')[-1]}"),
     p.wait()
 
     elaps = datetime.now() - thenn
     return elaps
 
+try:
+    import wmi
+    import psutil
+    import socket
+
+    def getCPU(remote_ip_address, username, password):
+        '''returns cpu usage in % (int) on remote ip'''
+        local_ip_address = socket.gethostbyname(socket.gethostname())
+
+        remote = {} if socket.gethostbyname(remote_ip_address) == local_ip_address else \
+             dict(computer=remote_ip_address, user=username, password=password)
+        c = wmi.WMI(find_classes=False, **remote )
+
+        return sum(
+            [ i.LoadPercentage
+                for i in c.Win32_Processor() if i.LoadPercentage ] )
+            # print("%s %s" % (i.DeviceID, i.LoadPercentage))
+except Exception as e:
+    if printImportWarnings:
+        print('WARNING: ',e)
+
+from datetime import datetime
+def lstat(file):
+    '''returns last access time of file'''
+    return pd.Timestamp(datetime.fromtimestamp(file.lstat().st_mtime))
+def getCommonPath(files):
+    common_path = Path(files[0])
+    for file in files[1:]:
+        while not str(file).startswith(str(common_path)):
+            common_path = common_path.parent
+    return common_path
 def fileBackup(filee,dir='Backup'):
     pthBackup = filee.parent/dir
     if not pthBackup.exists():
@@ -84,6 +164,11 @@ def fileBackup(filee,dir='Backup'):
     else:
         shutil.copy(filee,pthBackup/filee.name)
     print(f'{filee} backed up to {pthBackup}')
+    return pthBackup/filee.name
+def updateLstat(f):
+    tmp = f.with_suffix(f'.tmp{f.suffix}')
+    shutil.copy(f,tmp)
+    return shutil.move(tmp,f)
 def fileRestore(filee,dir='Backup'):
     bkfilee = filee.parent/dir/filee.name
     tmpfilee = filee.parent/f'{filee.name}.tmp'
@@ -139,8 +224,10 @@ def listFiles(pth):
         subindent = ' ' * 4 * (level + 1)
         for f in files:
             print('{}{}'.format(subindent, f))
+
 def getDirSize(pth = '.'):
-    '''recursive, pth: Path or str'''
+    '''recursive, pth: Path or str\n
+    in GB'''
     total_size = 0
     for dirpath, dirnames, filenames in os.walk(str(pth)):
         for f in filenames:
@@ -149,7 +236,26 @@ def getDirSize(pth = '.'):
             if not os.path.islink(fp):
                 total_size += os.path.getsize(fp)
 
-    return total_size
+    return GB(total_size)
+    
+def nan2None(obj):
+    if isinstance(obj, dict):
+        return {k:nan2None(v) for k,v in obj.items()}
+    elif isinstance(obj, list):
+        return [nan2None(v) for v in obj]
+    elif isinstance(obj, float) and np.isnan(obj):
+        return None
+    return obj
+class NanConverter(json.JSONEncoder):
+    def default(self, obj):
+        # possible other customizations here 
+        pass
+    def encode(self, obj, *args, **kwargs):
+        obj = nan2None(obj)
+        return super().encode(obj, *args, **kwargs)
+    def iterencode(self, obj, *args, **kwargs):
+        obj = nan2None(obj)
+        return super().iterencode(obj, *args, **kwargs)
 def jsonAppend(jsonpth,dictt,indent=4):
     with open(jsonpth) as f:
         data = json.load(f)
@@ -176,6 +282,9 @@ class htmler:
         '''
         return (head,bod)
         '''
+        if isinstance(htmlpth,str):
+            if not Path(htmlpth).exists():
+                return '',htmlpth # if it's just a str of html body TODO better way
         starter = lambda haystack,needle: haystack.find(needle)+len(needle)
         h = htmlpth.read_text()
 
@@ -297,7 +406,14 @@ except Exception as e:
     if printImportWarnings:
         print('WARNING: ',e)
 
-
+def URLfromParams(baseURL,params):
+    '''returns URL with params for API calls etc given\n
+    params: urlparams as dict\n
+    baseURL: str'''
+    return baseURL + '?' + \
+        '&'.join(
+            [f'{key}={val}' for key,val in params.items()]
+        )
 def DL(url,toPth,filename='infer',callback=None):
     '''DL's file from url and places in toPth Path\n
     returns request status code'''
@@ -313,11 +429,16 @@ def DL(url,toPth,filename='infer',callback=None):
     else:
         file_name=filename
 
-    r = requests.get(url, stream=True)
+    r = requests.get(url, stream=True, 
+        verify=False
+    )
     if r.status_code == requests.codes.ok:
         with open(toPth/file_name, 'wb') as f:
             for data in r:
                 f.write(data)
+    else:
+        print(f'''WARNING for {url}
+{r.status_code}: {r.reason}''')
     if callback:
         callback()
     return r.status_code
@@ -357,8 +478,50 @@ def runInParallel(funks):
         p.join()
     return 'done'
 
+import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Coroutine, TypeVar
+
+def async_to_sync(coroutine, timeout: float = 30) -> TypeVar("T"):
+    '''cant run twice???'''
+    T = TypeVar("T")
+    def run_in_new_loop():
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
+        try:
+            return new_loop.run_until_complete(coroutine)
+        finally:
+            new_loop.close()
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coroutine)
+
+    if threading.current_thread() is threading.main_thread():
+        if not loop.is_running():
+            return loop.run_until_complete(coroutine)
+        else:
+            with ThreadPoolExecutor() as pool:
+                future = pool.submit(run_in_new_loop)
+                return future.result(timeout=timeout)
+    else:
+        return asyncio.run_coroutine_threadsafe(coroutine, loop).result()
+
 import zipfile
 import gzip
+
+def gunzip(gzfile, outfile):
+    # Ensure input and output paths are treated as Path objects for consistency
+    infiletemp = Path(gzfile)
+    templocsys = Path(outfile)
+    
+    # Use gzip library to decompress the file
+    with gzip.open(infiletemp, 'rb') as f_in:
+        with open(templocsys, 'wb') as f_out:
+            shutil.copyfileobj(f_in, f_out)
+
 @timeit
 def unzipAll(pthOfZips,to1pth=None):
     '''unzips all .zip's in pthOfZips to individual folders\n
@@ -405,7 +568,7 @@ def unzipAll(pthOfZips,to1pth=None):
                     except OSError as e: # this would be "except OSError, e:" before Python 2.6
                         if e.errno != errno.ENOENT: # errno.ENOENT = no such file or directory
                             raise # re-raise exception if a different error occured ```
-
+   
 def DLunzip(urls,toPth,threds=12):
     '''DLmulti then unzipAll
     handles .zip or .gz'''
@@ -414,6 +577,15 @@ def DLunzip(urls,toPth,threds=12):
     unzipAll(zipth,toPth)
     shutil.rmtree(zipth)
     return res
+
+def gravitate(f):
+    if f.is_dir():
+        return [gravitate(i) for i in f.iterdir()]
+    ftmp = f.parent/f'{f.name}_temp'
+    shutil.copy(f,ftmp)
+    f.unlink()
+    shutil.move(ftmp,f)
+    return f
 
 def transferAttrs(oneObj,anotherObj='new'):
     '''transfer all attrs from oneObj to anotherObj which don't start with _\n
@@ -427,10 +599,19 @@ def transferAttrs(oneObj,anotherObj='new'):
     return anotherObj
 def attrsToDict(obj,skipWithPrefix='_'):
     return {atr:getattr(obj,atr) for atr in dir(obj) if not atr.startswith(skipWithPrefix)}
+def attrsFromDict(obj,cfgdict):
+    [setattr(obj,key,val) for key,val in cfgdict.items()]
 
-def bold(text):
-    '''for plots'''
-    return f'<b>{text}</b>'
+def bold(st):
+    '''for plots\n
+    wrap st with <b> tags, apply to each st in iterable if st is iterable'''
+    if isiter(st):
+        return [bold(i) for i in st]
+    return st if str(st).startswith('<b>') else f'<b>{st}</b>'
+from difflib import SequenceMatcher
+
+def similar(a, b):
+    return SequenceMatcher(None, a, b).ratio()
 
 from functools import reduce
 from operator import iconcat
@@ -526,8 +707,129 @@ def dropSuff(listOfStrs,n=1,delim=' '):
 class noTearsDict(dict):
     def __missing__(self, key):
         return key
+import json
+from collections import UserDict
+
+class filedict(UserDict):
+    def __init__(self, json_file):
+        '''init with jsonfile Path\n
+        keeps jsonfile updated with itself\n
+        inits with jsonfile if exists, to allow state to persist over multiple script calls, like a DB
+        '''
+        self.json_file = json_file
+        # Init with default dict if jsonfile doesn't exist
+        self.data = self.read()
+
+    def read(self):
+        if self.json_file.exists():
+            with open(self.json_file,'r') as f:
+                return json.load(f)
+        else:
+            return {}
+
+    def write(self):
+        self.json_file.parent.mkdir(parents=True,exist_ok=True)
+        with open(self.json_file, 'w') as outfile:
+            json.dump(self.data, outfile,indent=4)
+
+    def __setitem__(self,key,val):
+        super().__setitem__(key,val)
+        self.write()
+
+    def __delitem__(self,key):
+        super().__delitem__(key)
+        self.write()
+
+    def update(self, items=(), **kwds):
+        super().update(items, **kwds)
+        self.write()
+
+    def pop(self, key, d=None):
+        result = super().pop(key, d)
+        self.write()
+        return result
+
+    def popitem(self):
+        result = super().popitem()
+        self.write()
+        return result
+
+    def clear(self):
+        super().clear()
+        self.write()
+
+
+# class filedict(dict):
+#     def __init__(self,jsonfile):
+#         self.jsonfile = jsonfile
+#         super().__init__(self.read())
+#     '''init with jsonfile Path\n
+#     keeps jsonfile updated with itself\n
+#     inits with jsonfile if exists, to allow state to persist over multiple script calls, like a DB
+#     '''
+#     def read(self):
+#         if self.jsonfile.exists():
+#             if len(self.jsonfile.read_text()):
+#                 return json.load(open(self.jsonfile,'r'))
+#             else:
+#                 return {}
+#         else:
+#             return {}
+#     def write(self):
+#         self.jsonfile.parent.mkdir(parents=True,exist_ok=True)
+#         with open(self.jsonfile, 'w') as outfile:
+#             json.dump(self, outfile,indent=4)
+#     def __delitem__(self,key):
+#         super().__delitem__(key)
+#         self.write()
+#     def __setitem__(self,key,val):
+#         super().__setitem__(key,val)
+#         self.write()
+#     def update(self,items):
+#         super().update(items)
+#         self.write()
+#     def pop(self,item):
+#         super().pop(item)
+#         self.write()
+        
 def dictSwap(aDict):
     return {value:key for key, value in aDict.items()}
+class flexList(list):    
+    def __missing__(self, key):
+        print('missing!')
+        flexDict({})
+    def __getitem__(self, __key):
+        try:
+            res = super().__getitem__(__key)
+        except IndexError:
+            return fslexDict({})
+        if isinstance(res,list):
+            return flexList(res)
+        if isinstance(res,dict):
+            return flexDict(res)
+# ax='x'
+# ts['layout'][f'{ax}axis']['type']
+# kwargz={}
+# lyt = ts['layout']
+# for ax in ('x','y'):
+#     axlvl = lyt[f'{ax}axis']
+#     if axlvl['type']=='log':
+#         kwargz[f'log{ax}']=True
+#     if axlvl['title']['text']:
+#         kwargz[f'{ax}label'] = axlvl['title']['text']
+# kwargz
+# hv.Curve({'x':ts['x'],**ts['data'][0]}).opts(**kwargz)
+        
+class flexDict(dict):    
+    def __missing__(self, key):
+        return flexDict({})
+    def __getitem__(self, __key):
+        res = super().__getitem__(__key)
+        if isinstance(res,list):
+            return flexList(res)
+        if isinstance(res,dict):
+            return flexDict(res)
+        return res
 
 import re
 def replaceMulti(adict, text):
@@ -537,10 +839,12 @@ def replaceMulti(adict, text):
     regex = re.compile("|".join(map(re.escape, adict.keys(  ))))
     # For each match, look up the corresponding value in the dictionary
     return regex.sub(lambda match: adict[match.group(0)], text)
+def wordCount(text):
+    return len(re.findall(r'\w+', text))
 def ondah(namee):
     '''legalizes names for use in a SQL DB by adding a million underscores'''
     nm = namee[:]
-    unsavoryCharacters = [' ','.','`','=','+','^',',']
+    unsavoryCharacters = [' ','.','`','=','+','^',',',r'/','\\','?',"'"]
     rep = dict(zip(unsavoryCharacters,['_']*len(unsavoryCharacters)))
     nm = replaceMulti(rep,nm)
     if nm[0].isdigit():
@@ -645,6 +949,13 @@ except: #py 3.11
 #         return wrapper
 from scipy.spatial import KDTree
 class xnp():
+    def topNmean(aray,n):
+        p = aray
+        p = p.flatten()
+        p = -np.sort(-p)
+        ptop = p[:n]
+        topq = np.mean(ptop)
+        return topq
     def ABtree(A,B,maxdist=2):
         '''literally just KDTree but return -1 for indices > maxdist'''
         dist,snap = KDTree(A).query(B,distance_upper_bound=maxdist)
@@ -678,7 +989,6 @@ class xnp():
         else:
             snap = xnp.ABtree(A,B,maxdist)
         return snap
-
     def find_nearest(array, value):
         '''NOT TESTED
         https://stackoverflow.com/questions/2566412/find-nearest-value-in-numpy-array'''
@@ -708,7 +1018,53 @@ class xnp():
             return np.where(mask, vs[idx], ar)
         else:
             return vs[idx]
+    def quantiles(values,probabilities,quantiles = np.linspace(0, 1, 101)):
+        """
+        Compute the approximate inverse cumulative distribution function (CDF) or quantile function.\n
+        \n
+        Parameters:\n
+            values (list or array-like): Values of the probability mass function.\n
+            probabilities (list or array-like): Corresponding probabilities for each value.\n
+            quantiles (list or array-like, optional): Quantiles to compute the inverse CDF values.\n
+                Default is np.linspace(0, 1, 100).\n
+        \n
+        Returns:\n
+            list: Inverse CDF values corresponding to the provided quantiles.\n
+        \n
+        Example:\n
+            values = [1, 2, 3, 4, 5]\n
+            probabilities = [0.1, 0.2, 0.3, 0.2, 0.2]\n
+            quantiles = np.linspace(0, 1, 101)\n
+            result = quantiles(values, probabilities, quantiles)\n
+        """
+        # Assuming you have two columns: 'values' and 'probabilities'
+
+        # Sort values and probabilities in ascending order based on values
+        sorted_data = sorted(zip(values, probabilities), key=lambda x: x[0])
+        values, probabilities = zip(*sorted_data)
+
+        # Compute the cumulative probabilities
+        cumulative_probs = np.cumsum(probabilities)
+
+        # Define the inverse CDF function
+        inverse_cdf = np.interp
+
+        # Compute the inverse CDF values
+        inverse_cdf_values = inverse_cdf(quantiles, cumulative_probs, values)
+        return inverse_cdf_values
 from scipy.interpolate import interp1d
+
+try:
+    import asyncio, aiofiles
+    from io import StringIO
+except Exception as e:
+    print('WARNING: ',e)
+
+try:
+    import h5py
+except Exception as e:
+    print('WARNING: ',e)
+    
 class xpd():
     '''Handy tools for pandas'''
     class prof(pd.Series):
@@ -790,6 +1146,20 @@ class xpd():
         else:
             raise NotImplementedError(f"Unsupported type {type(df)}. Only file path / existing df supported at this time")
     
+    def hasna(df):
+        if np.isnan(df) is True:
+            return True
+        try:
+            na = df.isna().any()
+            if isinstance(na,pd.Series):
+                return na.any()
+            else:
+                return na
+        except AttributeError as e:
+            return np.isnan(df)
+
+    hasnan = hasna
+            
     def weightedAvg(df,w8col):
         '''returns the weighted average of cols in df grouped by df.index lvl 0\n
         w8col is the weighting to use for each item within each unique lvl0\n
@@ -869,8 +1239,121 @@ class xpd():
         df
         nodata = df.T.groupby(level=0).all().T
         return nodata
+    def nearest(val,lookupSeries):
+        '''Find the nearest index value in lkup series to val'''
+        lkup = lookupSeries
+        idx = lkup.sub(val).abs().idxmin()
+        return idx
+    def fillBetween(series):
+        """
+        Fill NaN values in a Pandas Series only between valid numbers, leaving 
+        leading and trailing NaN values untouched.
+
+        This function interpolates missing values within the valid range of 
+        non-NaN values while preserving NaNs at the start and end of the Series.
+
+        Parameters
+        ----------
+        series : pd.Series
+            The input Pandas Series containing NaN values and valid numbers.
+
+        Returns
+        -------
+        pd.Series
+            A Series with NaN values filled only within the valid range of numbers.
+
+        Examples
+        --------
+        df\n
+            +-----+-----+-----+
+            |  t  |  a  |  b  |
+            +-----+-----+-----+
+            |  0  | NaN | NaN |
+            |  1  | 2.0 | NaN |
+            |  2  | NaN | 4.0 |
+            |  3  | 2.0 | NaN |
+            |  4  | NaN | 4.0 |
+            |  5  | NaN | NaN |
+            +-----+-----+-----+
+
+        df = df.apply(xpd.fillBetween, axis=0)\n
+
+            +-----+-----+-----+
+            |  t  |  a  |  b  |
+            +-----+-----+-----+
+            |  0  | NaN | NaN |
+            |  1  | 2.0 | NaN |
+            |  2  | 2.0 | 4.0 |
+            |  3  | 2.0 | 4.0 |
+            |  4  | NaN | 4.0 |
+            |  5  | NaN | NaN |
+            +-----+-----+-----+
+        """
+        mask = series.notna()
+        valid_range = (mask.cumsum() > 0) & (mask[::-1].cumsum()[::-1] > 0)
+        filled = series.interpolate()
+        return filled.where(valid_range)
+
+        mask = series.notna()
+        # Boolean mask for valid range
+        valid_range = (mask.cumsum() > 0) & (mask[::-1].cumsum()[::-1] > 0)
+        # Interpolate the series and mask out invalid ranges
+        filled = series.interpolate()
+        return filled.where(valid_range)
+
+    def roundWithoutExceeding(series,maxsum='original_sum'):
+        """
+        Rounds elements of a Pandas series to the nearest integer 
+        in such a way that the sum of the rounded series does not exceed the sum 
+        of the original series.
+
+        Parameters:
+        series (pd.Series): Series of numbers to be rounded.
+
+        Returns:
+        pd.Series: A new series where all numbers are rounded to the nearest integer, 
+        but the sum does not exceed the original sum.
+        """
+        if maxsum=='original_sum':
+            original_sum = series.sum()
+        else:
+            original_sum = maxsum
+        rounded = series.round()
+        difference = rounded.sum() - original_sum
+
+        # if the sum of the rounded series is greater than the original sum
+        if difference > 0:
+            # get indices of elements where the fractional part is less than 0.5
+            indices = series[series % 1 < 0.5].index
+            # decrement these elements until the sum of the rounded series is not more than the original sum
+            while difference > 0 and len(indices) > 0:
+                for i in indices:
+                    rounded[i] -= 1
+                    difference = rounded.sum() - original_sum
+                    if difference <= 0:
+                        break
+                indices = rounded[rounded < series].index
+
+        return rounded
+
+    async def _read_csv_async(file_path):
+        async with aiofiles.open(file_path, mode='r') as f:
+            content = await f.read()
+            return content
+    async def read_csv_async(csvpth,**kwargz):
+        content = await xpd._read_csv_async(csvpth)
+        data = StringIO(content)
+        df = pd.read_csv(data,**kwargz)
+        return df
+    async def to_csv_async(df, file_name, **kwargs):
+        '''This function coverts the DataFrame into CSV format using `DataFrame.to_csv` and saves it as a string. Later, this string is written to a file using the `aiofiles.open`. '''
+        csv_data = df.to_csv(**kwargs)
+        async with aiofiles.open(file_name, mode='w') as file:
+            await file.write(csv_data)
+
     def tsGaps(dtIndex_ts,freq='H'):
-        '''    #The complete timeseries record needed\n
+        '''index should be pd datetime index!
+            #The complete timeseries record needed\n
         fullts = pd.date_range(ts.min(),ts.max(),freq=freq)\n
         gaps = fullts[~fullts.isin(ts)]'''
         ts =dtIndex_ts
@@ -968,11 +1451,12 @@ class xpd():
             print(f'WARNING: {e} while unbyting {hdf}, resuming')
         df = df.replace({fillvalue:np.NaN})
         return df
-    def tohdf(DF,HDFparentGroup,HDFdsName,attrz=None,fillvalue=-9999):
+    def tohdf(DF,HDFparentGroup,HDFdsName,attrz=None,fillvalue=-9999,**kwargs):
         '''because pd.to_hdf() SUCKS!\n
         HDFparentGroup: h5py Group\n
         HDFgroupName: str, name of new table to add in HDf parent group\n
-        returns HDFparentGroup[HDFgroupName]'''
+        returns HDFparentGroup[HDFgroupName]\n
+        **kwargs passed to HDFparentGroup.create_dataset() ie chunks=(chunksize0,chunksize1)'''
         df = DF.copy()
 
         if df.columns.dtype=='O':
@@ -1004,20 +1488,43 @@ class xpd():
         # write to file
         if HDFdsName in HDFparentGroup.keys():
             del HDFparentGroup[HDFdsName]
-        HDFparentGroup.create_dataset(HDFdsName,data=arr)
+        HDFparentGroup.create_dataset(HDFdsName,data=arr,**kwargs)
             # throws err if ds is not the same size:
             # HDFparentGroup[HDFdsName][:] = arr
 
         tbl = HDFparentGroup[HDFdsName]
         if attrz:
             tbl.attrs.update(attrz)
+            #TODO use this instead
+            #             modify(name, value)
+            # Change the value of an attribute while preserving its type and shape. Unlike AttributeManager.__setitem__(), if the attribute already exists, only its value will be changed. This can be useful for interacting with externally generated files, where the type and shape must not be altered.
+
+            # If the attribute doesn't exist, it will be created with a default shape and type.
+
+            # Parameters
+            # :
+            # name (String) Name of attribute to modify.
+
+            # value New value. Will be put through numpy.array(value).
+            # for atr in ['Percent Impervious Filename','Infiltration Filename','Land Cover Filename']:
+            #     hdf['Geometry'].attrs.modify(atr,
+            #         hdf['Geometry'].attrs[atr].decode().replace('..\\07_MapLayers','.\\MapLayers').encode()
+            #     )
+            # with h5py.File(nexthdf, 'r+') as hdf:
+            #     grup = hdf['/Event Conditions/Meteorology/Precipitation']
+            #     for atr in ['DSS Filename','DSS Pathname']:
+            #         st = grup.attrs[atr].decode()
+            #         st = replaceMulti(rep,st)
+            #         grup.attrs.modify(atr,st.encode())
         return tbl
-    def tohdfFile(DF,HDFfile,pathToParentGroup,HDFdsName):
+    def tohdfFile(DF,HDFfile,pathToParentGroup,HDFdsName,
+        attrz=None,fillvalue=-9999,**kwargs):
         '''tohdf but with unopen! HDF file Path specified\n
         xpd.tohdfFile(df,hdfFile,"/Geometry/Land Cover (Manning's n)",'Calibration Table')
         '''
         with h5py.File(HDFfile,'r+') as hdf:
-            xpd.tohdf(DF,hdf[pathToParentGroup],HDFdsName)
+            xpd.tohdf(DF,hdf[pathToParentGroup],HDFdsName,
+                attrz=attrz,fillvalue=fillvalue,**kwargs)
 
     def readhdfAttrs(hdfattrs):
         '''hdfattrs: h5py.File(HDFpth)['table'].attrs'''
@@ -1082,6 +1589,7 @@ class xpd():
         ax.set_xlabel('Percent samples with data')
         # add grid
         return ax.grid()
+    quantiles = xnp.quantiles
 
     def consol(df,grupby=None,pivotCols=None,lvl=None,ND=False,how='list'):
         '''pd prefix-consolidate rows, merge dup values together as lists (or specified how='function')\n
@@ -1187,16 +1695,34 @@ class xpd():
         if dex:
             q=q.set_index(dexs[dex]).sort_index()
         return q
-    def findNeighbors(df,field,value):
-        ''''''
-        exactmatch=df[df[field]==value]
+    def findNeighbors(df, colname, value):
+        """
+        Fuzzy lookup\n
+        Finds the exact matches for a given value in a specified column of a DataFrame or Series. If no exact matches are found, it returns the closest lower and upper neighbors.\n
+        Args:\n
+            df (pd.DataFrame or pd.Series): The DataFrame or Series to search within.\n
+            colname (str): The column name to search in.\n
+            value (int or float): The value to find in the specified column.\n
+        Returns:\n
+            pd.DataFrame or pd.Series: A DataFrame or Series containing the exact matches if they exist. Otherwise, it returns the closest lower and upper neighbors.\n   
+            ie len of df will be 1 or 2, respectively\n
+        Raises:\n
+            AssertionError: If df is not a DataFrame or Series.\n
+        """
+
+        assert (isinstance(df, pd.DataFrame) or isinstance(df, pd.Series)), type(df)
+        exactmatch = df[df[colname] == value]
         if not exactmatch.empty:
-            return exactmatch.index
+            return df.iloc[exactmatch.index]
         else:
-            lowerneighbour_ind = df[df[field]<value][field].idxmax()
-            upperneighbour_ind = df[df[field]>value][field].idxmin()
-            return [lowerneighbour_ind, upperneighbour_ind]
-    def read_excel_sheets(xls_path):
+            lower_df = df[df[colname] < value]
+            upper_df = df[df[colname] > value]
+            lowerneighbour_ind = lower_df[colname].idxmax() if not lower_df.empty else None
+            upperneighbour_ind = upper_df[colname].idxmin() if not upper_df.empty else None
+            indices = [ind for ind in [lowerneighbour_ind, upperneighbour_ind] if ind is not None]
+            return df.iloc[indices]
+
+    def read_excel_sheets(xls_path, sheet_names=None):
         """Read all sheets of an Excel workbook and return a single DataFrame\n
         can be as .xls, .xlsx, etc
         https://gist.githubusercontent.com/NicoleJaneway/64103ea4a2e89ad19acdf1e68e633e02/raw/c0ce333c845a246242e33388c8891ed8d9084f92/sheet_name.py"""
@@ -1214,8 +1740,9 @@ class xpd():
             # Add sheet name as column
             sheet['sheet'] = name
             # Assume index of existing data frame when appended
-            df = df.append(sheet, ignore_index=True)
+            df = pd.concat([df, sheet], ignore_index=True)
         return df
+    readExcelSheets = read_excel_sheets
     
 try:
     import xarray as xr
@@ -1228,6 +1755,65 @@ except Exception as e:
     if printImportWarnings:
         print('WARNING: ',e,'Zarr is an optional dependency')
 class xxr:
+    def buffer(ds, dim, buff, method=None, fill_value=np.nan, **kwargs):
+        """
+        Expands a specified dimension of an xarray dataset by a given buffer, 
+        adding new coordinates at the same regular interval without changing any current indices.
+
+        Parameters
+        ----------
+        ds : xarray.Dataset
+            The input xarray dataset containing the dimension to expand.
+        dim : str
+            The name of the dimension to expand in the dataset.
+        buff : float, int, or pd.Timedelta
+            The buffer size to be added to both ends of the specified dimension range.
+            Can be a float or int for numerical dimensions or a pd.Timedelta for datetime dimensions.
+        method : str, optional
+            The method to use for filling the new values (default is None).
+        fill_value : float, optional
+            The value to fill the new coordinates with (default is NaN).
+
+        Returns
+        -------
+        xarray.Dataset
+            A new xarray dataset with expanded dimension, where new 
+            coordinates are filled with the specified fill value.
+
+        Notes
+        -----
+        ds = buffer_1d(bc, dim='time', buff=pd.Timedelta(days=7*4))
+        This function retains the original indices in the specified dimension 
+        and only adds new indices to extend the dataset by the given buffer.
+        """
+        coords = ds[dim]
+        step = pd.Timedelta(np.abs(coords[1] - coords[0]).values) if np.issubdtype(coords.dtype, np.datetime64) else np.abs(coords[1] - coords[0])
+
+        # Check if the dimension coordinates are datetime objects
+        if np.issubdtype(coords.dtype, np.datetime64):
+            if not isinstance(buff, pd.Timedelta):
+                raise TypeError("For datetime dimensions, buff should be a pandas.Timedelta.")
+
+            # Generate buffer coordinates for datetime
+            lower_buffer = pd.date_range(end=coords.min().values - step, periods=int(buff / step), freq=step)
+            upper_buffer = pd.date_range(start=coords.max().values + step, periods=int(buff / step), freq=step)
+            
+        else:
+            # Assume numeric type for other dimensions
+            if isinstance(buff, pd.Timedelta):
+                raise TypeError("For numeric dimensions, buff should be a float or int.")
+            
+            # Generate buffer coordinates for numeric values
+            lower_buffer = np.arange(coords.min() - buff, coords.min(), step)
+            upper_buffer = np.arange(coords.max() + step, coords.max() + buff + step, step)
+        
+        # Concatenate new coordinates with original ones
+        new_coords = np.union1d(coords, np.concatenate([lower_buffer, upper_buffer]))
+        
+        # Reindex dataset with expanded coordinates and fill new values
+        ds_expanded = ds.reindex({dim: new_coords}, method=method, fill_value=fill_value, **kwargs)
+        
+        return ds_expanded
     def RMSE(y_true,y_sim,dim=None,normed=True):
         ''' ## Root Mean Squared Error\n
         \mathrm{RMSD} = \sqrt{\frac{\sum_{i=1}^{N}\left(x_{i}-\hat{x}_{i}\right)^{2}}{N}}\n\n
@@ -1269,7 +1855,7 @@ class xxr:
         metrix = [ funk(y_true,y_sim,**kwargz)  for funk in (xr.corr,xxr.RMSE,xxr.pctBias) ]
         trio = xr.Dataset(dict(zip(['cor','rmse','pb'],metrix)))
         return trio
-    def to_file(ds,outFile,complevel=5,driver='inferFromExtension'):
+    def to_file(ds,outFile,complevel=3,driver='inferFromExtension'):
         '''
         bounce to .nc or .zarr at compression level complevel
         '''
@@ -1284,9 +1870,151 @@ class xxr:
         elif outFile.name.split('.')[-1] == 'zarr' or driver.lower()=='zarr':
             print('Writing to Zarr')
             compr = {'compressor':
-                zarr.Blosc(cname="zstd", clevel=7, shuffle=2) }
+                zarr.Blosc(cname="zstd", clevel=complevel, shuffle=2) }
 
             encoding = encoding = {ds.name: compr} if isinstance(ds,xr.DataArray) \
                 else {var: compr for var in ds.data_vars}
             ds.to_zarr(outFile, encoding=encoding)
             print(f'Successfully bounced to {outFile}')
+    # bounce = xxr.to_file # alias
+    def benchmarkComplevels(ds,toPth,lvls=[3,5,7,9]):
+        '''
+        Benchmark nc xxr.to_file compression levels for a dataset\n
+        '''
+        def bmark(lvl):
+            print(f'Compression level: {lvl}')
+            outnc = toPth/f'test{lvl}.nc'
+
+            start = datetime.now()
+            xxr.to_file(ds,outnc,complevel=lvl)
+            end = datetime.now()
+
+            t = (end - start).total_seconds()
+            sz = outnc.stat().st_size/1e9
+            print(f'Time: {t} s')
+            print(f'Size: {sz} GB\n')
+            return t,sz
+        bm = [bmark(lvl) for lvl in tqdm(lvls) ]
+        return bm
+
+    @progbar
+    def getWaveRaster(nc,var,clipper=None,
+        outTIF=None,outvec=None,outJSON=None,
+        func=lambda ds:ds,
+        clipbuff=50,res=90):
+        '''
+        Rasterizes netCDF dataset (nc)\n
+        extracts wave data, applies a function (func) to preprocess the data, \n
+        and clips the data to a specified region (clipper). The processed data can be saved as a raster TIFF file, \n
+        a vector file, or a JSON file. \n
+
+        Args:
+            nc (str): Path to the netCDF file. \n
+            clipper (str): Path to the clipper shapefile defining the region of interest. \n
+            outTIF (str, optional): Path to output raster TIFF file. \n
+            outvec (str, optional): Path to output vector file. \n
+            outJSON (str, optional): Path to output JSON file to export flat array of
+             unclipped ds[var].values.flatten(). \n
+            func (function, optional): Function to apply to the dataset during preprocessing.
+             Default is an identity function. \n
+            clipbuff (int, optional): Buffer for clipping in miles. Default is 50 miles. \n
+            res (int, optional): cellsize resolution for the output raster. Default is 90. \n
+
+        Returns:
+            xarray.DataArray: Geocube object representing the processed and clipped data. \n
+        '''
+        # var = nc.stem.split('_')[1]
+        wv = xr.open_dataset(nc,
+            drop_variables=['neta','nvel'],
+            # chunks={'node':1},
+            )
+        # wv = wv.rename({f'swan_{var}_max':var})
+        
+        wv = func(wv)
+
+        if outJSON:
+            dst = wv[var].values
+            dst = dst[~np.isnan(dst)]
+            with open(outJSON, 'w') as outfile:
+                json.dump(list(dst), outfile)
+            print(f'distribution saved to {outJSON}')
+            
+        nodes = gpd.GeoDataFrame({var:wv[var]},geometry=gpd.points_from_xy(wv.x,wv.y),crs='EPSG:4326')
+        print('gdf created')
+        nodes=nodes.dropna()
+        if clipper:
+            clper = shp.gp.asGDF(clipper)
+            nodes = nodes.to_crs(clper.crs)
+
+            clpnodes = nodes.clip(
+                clper.buffer(5280*clipbuff)
+                )
+        else:
+            clpnodes = nodes
+        if outvec:
+            outvec.parent.mkdir(parents=True,exist_ok=True)
+            clpnodes.to_file(outvec)
+        cbe = make_geocube(clpnodes,output_crs=nodes.crs,interpolate_na_method='linear',resolution=(-res,res))
+        print(f'{nc.parent.name} rasterized')
+        if outTIF:
+            outTIF.parent.mkdir(parents=True,exist_ok=True)
+            cbe.rio.to_raster(outTIF)
+            print(f'Bounced to {outTIF}')
+
+        return cbe
+
+class h5:
+    def asHDF(hdf,mode='r'):
+        '''if h5py.File, returns hdf\n
+        else\n
+        opens hdf in mode=mode and returns h5py.File'''
+        if isinstance(hdf,h5py.File):
+            return hdf
+        else:
+            return h5py.File(hdf,mode)
+    def scan(openHDFfile,srchlen=None,srchTerm='',level=0):
+        """prints structure of hdf5 file    \n
+        openHDFfile object can be obtained with: h5py.File(hdfPath)\n
+        if srchTerm, will print only items who have that str somewhere in their hierarchy\n
+        if srchlen, will print only items whose # columns or # rows matches this int\n
+        (This is helpful for finding which attributes corresponds to 2D flow area cells, faces, or facepoints)\n
+        Do not specify level, used for searching recursively
+        """
+        #printhdfstructure
+        for key in openHDFfile.keys():
+            if isinstance(openHDFfile[key], h5py._hl.dataset.Dataset):
+                if srchlen:
+                    srch = ( openHDFfile[key].shape[0]==srchlen or(len(openHDFfile[key].shape)>1 and openHDFfile[key].shape[1]==srchlen) )
+                else:
+                    srch = True
+                if srch:
+                    if srchTerm in openHDFfile[key].name:
+                        print(f"{'  '*level}  {openHDFfile[key].shape} DATASET: {openHDFfile[key].name}")
+            elif isinstance(openHDFfile[key], h5py._hl.group.Group):
+    #             print(f"{'  '*level} GROUP: {key, openHDFfile[key].name}")
+                level += 1
+                h5.scan(openHDFfile[key],srchlen=srchlen,srchTerm=srchTerm,level=level)
+                level -= 1
+
+            if openHDFfile[key].parent.name == "/":
+                print("\n"*2)
+    def copyGroup(fromHDF,toHDF,grup='Geometry'):
+        '''TODO HDF's can be a subgroup rather than file path\n
+        copy one to another, overwriting any existing '''
+
+        phdf,ghdf = h5py.File(toHDF,'a') , h5py.File(fromHDF)
+
+        with h5py.File(toHDF,  "a") as f:
+            try:    
+                del f[grup]
+            except KeyError: # if it didn't exist
+                pass
+            
+        assert ghdf[grup]
+        # Group.copy() can certainly copy between files; just supply a File or
+        # Group instance as the "dest" parameter:
+        ghdf.copy(grup,phdf)
+
+        assert phdf[grup]
+        phdf.close()
+        ghdf.close()

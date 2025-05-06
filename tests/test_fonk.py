@@ -358,6 +358,54 @@ class Testxpd():
         hdf.close()
         assert Hdf.equals(df)
 
+    @pytest.mark.parametrize("df, colname, value, expected", [
+        (pd.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6]}), 'A', 2,    pd.DataFrame({'A': [2], 'B': [5]}, index=[1])),
+        (pd.DataFrame({'A': [1, 3, 5], 'B': [2, 4, 6]}), 'A', 4,    pd.DataFrame({'A': [3, 5], 'B': [4, 6]}, index=[1, 2])),
+        (pd.DataFrame({'A': [3, 1, 5], 'B': [4, 2, 6]}), 'A', 4,    pd.DataFrame({'A': [3, 5], 'B': [4, 6]}, index=[0, 2])),
+        (pd.DataFrame({'A': [5, 1, 3], 'B': [6, 2, 4]}), 'A', 4,    pd.DataFrame({'A': [3, 5], 'B': [4, 6]}, index=[2, 0])),
+        (pd.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6]}), 'B', 5,    pd.DataFrame({'A': [2], 'B': [5]}, index=[1])),
+        (pd.DataFrame({'A': [1, 3, 5], 'B': [2, 4, 6]}), 'B', 3,    pd.DataFrame({'A': [1, 3], 'B': [2, 4]}, index=[0, 1])),
+        (pd.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6]}), 'A', 4,    pd.DataFrame({'A': [3], 'B': [6]}, index=[2])),
+        (pd.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6]}), 'A', -12,  pd.DataFrame({'A': [1], 'B': [4]}, index=[0])),
+        (pd.DataFrame({'A': [1, np.nan, 3], 'B': [4, 5, 6]}), 'A',2,pd.DataFrame({'A': [1, 3], 'B': [4, 6]}, index=[0, 2]))
+    ])
+    def test_findNeighbors(self,df, colname, value, expected):
+        result = xpd.findNeighbors(df, colname, value)
+        pd.testing.assert_frame_equal(result, expected,check_dtype=False)
+
+    @pytest.mark.parametrize(
+        "input_series, expected_output",
+        [
+            # Test case 1: Basic interpolation between values
+            (
+                pd.Series([np.nan, 2.0, np.nan, 2.0, np.nan, np.nan], index=range(6)),
+                pd.Series([np.nan, 2.0, 2.0, 2.0, np.nan, np.nan], index=range(6))
+            ),
+            # Test case 2: Interpolation for multiple ranges
+            (
+                pd.Series([np.nan, 1.0, np.nan, 1.0, np.nan, 3.0], index=range(6)),
+                pd.Series([np.nan, 1.0, 1.0, 1.0, 2.0, 3.0], index=range(6))
+            ),
+            # Test case 3: No valid values, all NaN
+            (
+                pd.Series([np.nan, np.nan, np.nan, np.nan, np.nan, np.nan], index=range(6)),
+                pd.Series([np.nan, np.nan, np.nan, np.nan, np.nan, np.nan], index=range(6))
+            ),
+            # Test case 4: Already complete, no filling needed
+            (
+                pd.Series([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], index=range(6)),
+                pd.Series([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], index=range(6))
+            ),
+            # Test case 5: Leading and trailing NaNs remain untouched
+            (
+                pd.Series([np.nan, np.nan, 3.0, np.nan, 5.0, np.nan], index=range(6)),
+                pd.Series([np.nan, np.nan, 3.0, 4.0, 5.0, np.nan], index=range(6))
+            ),
+        ]
+    )
+    def test_fill_between(self,input_series, expected_output):
+        result = xpd.fillBetween(input_series)
+        pd.testing.assert_series_equal(result, expected_output)
 
 
 def test_replaceMulti_happens_in_one_pass():
