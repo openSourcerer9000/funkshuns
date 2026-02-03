@@ -947,7 +947,11 @@ except: #py 3.11
 #                 objref.__setattr__(x,argsvalues.pop(0))
 
 #         return wrapper
-from scipy.spatial import KDTree
+try:
+    from scipy.spatial import KDTree
+except Exception as e:
+    if printImportWarnings:
+        print('WARNING: ',e)
 class xnp():
     def topNmean(aray,n):
         p = aray
@@ -1052,7 +1056,11 @@ class xnp():
         # Compute the inverse CDF values
         inverse_cdf_values = inverse_cdf(quantiles, cumulative_probs, values)
         return inverse_cdf_values
-from scipy.interpolate import interp1d
+try:
+    from scipy.interpolate import interp1d
+except Exception as e:
+    if printImportWarnings:
+        print('WARNING: ',e)
 
 try:
     import asyncio, aiofiles
