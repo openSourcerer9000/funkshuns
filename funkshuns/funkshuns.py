@@ -971,8 +971,8 @@ class xnp():
         snp
         snp = snp.replace(-1,np.nan)
         snp
-        snp.loc[snp[0]==snp.index,0]=np.NaN
-        snp.loc[snp[1]==snp.index,1]=np.NaN
+        snp.loc[snp[0]==snp.index,0]=np.nan
+        snp.loc[snp[1]==snp.index,1]=np.nan
         snp
         fild = snp[0].fillna(snp[1])
         fild
@@ -1064,7 +1064,14 @@ try:
     import h5py
 except Exception as e:
     print('WARNING: ',e)
-    
+import numpy as np
+if __package__ is None or __package__ == '':
+    # uses current directory visibility
+    from byteme import set_attrs_bytes,h5_nullterm_dtype
+else:
+    # uses current package visibility
+    from .byteme import set_attrs_bytes,h5_nullterm_dtype
+
 class xpd():
     '''Handy tools for pandas'''
     class prof(pd.Series):
@@ -1427,7 +1434,7 @@ class xpd():
     def unByte(df):
         '''Are b'strings' byting you in the ass? This will get rid of them'''
         #TODO test that this doesn't lose cols
-        #return df.applymap(lambda x: x.decode('utf-8'))
+        #return df.map(lambda x: x.decode('utf-8'))
         # debyte = lambda x: x.decode('utf-8')
         # return df.apply(lambda s: s.map(debyte))
         str_df = df.select_dtypes(['object']) #np.object may be the older way
@@ -1446,55 +1453,123 @@ class xpd():
         testbcols = [ col for col in df.columns if isinstance(df[col].iloc[-1], (bytes, bytearray)) ]
         assert bcols==testbcols
         try:
-            df[bcols] = df[bcols].applymap(lambda x: x.decode('utf-8'))
+            df[bcols] = df[bcols].map(lambda x: x.decode('utf-8'))
         except Exception as e:
             print(f'WARNING: {e} while unbyting {hdf}, resuming')
-        df = df.replace({fillvalue:np.NaN})
+        df = df.replace({fillvalue:np.nan})
         return df
-    def tohdf(DF,HDFparentGroup,HDFdsName,attrz=None,fillvalue=-9999,**kwargs):
-        '''because pd.to_hdf() SUCKS!\n
-        HDFparentGroup: h5py Group\n
-        HDFgroupName: str, name of new table to add in HDf parent group\n
-        returns HDFparentGroup[HDFgroupName]\n
-        **kwargs passed to HDFparentGroup.create_dataset() ie chunks=(chunksize0,chunksize1)'''
+    def forceDtypes(DF,dtypeDict={int:np.int8,float:np.float32}):
+        '''forces dtypes in DF according to dtypeDict\n
+        dtypeDict keys are python types, values are numpy dtypes\n
+        ex: xpd.forceDtypes(df,{int:np.int8,float:np.float32})'''
         df = DF.copy()
+        for pytype, nptype in dtypeDict.items():
+            cols = df.select_dtypes(include=[pytype]).columns
+            df[cols] = df[cols].astype(nptype)
+        return df
 
-        if df.columns.dtype=='O':
+    def _clone_dataset_kwargs(ds):
+        """Extract dtype + layout info from an existing h5py dataset."""
+        return dict(
+            dtype=ds.dtype,
+            chunks=ds.chunks,
+            compression=ds.compression,
+            compression_opts=ds.compression_opts,
+            shuffle=ds.shuffle,
+            fletcher32=ds.fletcher32,
+            fillvalue=ds.fillvalue,
+        )
+
+    def tohdf(DF, HDFparentGroup, HDFtblName, attrz=None, fillvalue=None, like=None,
+              force_nullterm=True, **kwargs):
+        """
+        Write DataFrame to HDF5 dataset.
+        
+        like: h5py.Dataset to clone schema from (auto-uses existing if present)
+        kwargs: compression, chunks, etc.
+        fillvalue: value to fill NaNs with (sometimes need -9999)
+        attrz: dict of attributes to add to dataset
+        force_nullterm: force null-terminated strings (h5py default is not null-terminated)
+        Returns the created h5py.Dataset.
+        """
+        df = DF.copy()
+        # Auto-use existing as template (only if compound)
+        if HDFtblName in HDFparentGroup.keys():
+            like = HDFparentGroup[HDFtblName] if like is None else like
+            del HDFparentGroup[HDFtblName]
+        print(HDFtblName)
+        print(like)
+
+        
+        if df.columns.dtype==str:
             df.columns=df.columns.str.replace('/','-') #TODO more illegal chars? replcaemulti
-        
-        df = df.fillna(fillvalue)
-        
+        if fillvalue is not None:
+            df = df.fillna(fillvalue)
+
         #encode str to bytes
         bcols = [ col for col in df.columns if isinstance(df[col].iloc[0], str) ]
         testbcols = [ col for col in df.columns if isinstance(df[col].iloc[-1], str) ]
         assert bcols==testbcols
-        df[bcols] = df[bcols].applymap(lambda x: x.encode('utf-8')).astype('bytes')
+        df[bcols] = df[bcols].map(lambda x: x.encode('utf-8')).astype('bytes')
 
-        if isinstance(df.columns,pd.RangeIndex): #no col names
-            arr = df.values
+        if  like:
+            is_compound = like.dtype.names is not None
+            is_matrix   = (not is_compound) and like.ndim == 2
         else:
-            # extract column names and dtypes to create the recarray dtype
-            arr_dt = []   
-            for col in df.columns:
-                arr_dt.append( (col, df[col].dtype) )   
+            is_matrix = (
+                df.ndim == 2 and
+                df.dtypes.nunique() == 1 and
+                df.dtypes.iloc[0].kind in "iufb"   # int/uint/float/bool
+            )
+        # print(f'is_matrix: {is_matrix}')
+        if is_matrix:
+            arr = df.to_numpy(dtype=like.dtype if like else None, copy=False)
+        else:
+            arr = df.to_records(index=False)
 
-            # create an empty recarray based on Pandas dataframe row count and dtype
-            arr = np.empty( (len(df),), dtype=arr_dt )
+        if like:
+            create_kwargs = {
+                'compression': like.compression,
+                'compression_opts': like.compression_opts,
+                'dtype': like.dtype,# if is_matrix else (like.dtype,),
+                'maxshape':like.maxshape,
+                'shuffle': like.shuffle,
+                'fillvalue': like.fillvalue,
+                **kwargs
+            } 
 
-            # load dataframe column values into the recarray fields
-            for col in df.columns:
-                arr[col] = df[col].values
-
-        # write to file
-        if HDFdsName in HDFparentGroup.keys():
-            del HDFparentGroup[HDFdsName]
-        HDFparentGroup.create_dataset(HDFdsName,data=arr,**kwargs)
-            # throws err if ds is not the same size:
-            # HDFparentGroup[HDFdsName][:] = arr
-
-        tbl = HDFparentGroup[HDFdsName]
+            # Clone compression/chunk settings from like, adjusting chunks for 1D shape (recarray)
+            c = getattr(like, "chunks", None)
+            chunks = c if is_matrix else (c[0],)
+            chunks = None if c is None else chunks
+            if chunks:
+                create_kwargs['chunks'] = chunks
+        else:
+            create_kwargs = {
+                'dtype': arr.dtype ,
+                'maxshape': (None,) + arr.shape[1:] if is_matrix else (None,),
+                **kwargs
+            }
+        print(create_kwargs)
+        
+        if force_nullterm:
+            # force null-terminated strings
+            create_kwargs['dtype'] = h5_nullterm_dtype(create_kwargs['dtype'])
+        dset = HDFparentGroup.create_dataset(HDFtblName, 
+                                         shape=arr.shape,
+                                      **create_kwargs)
+        dset[:] = arr
+        
         if attrz:
-            tbl.attrs.update(attrz)
+            # battrz = { k:(v.encode('utf-8') if isinstance(v,str) else v) for k,v in attrz.items() }
+            # dset.attrs.update(battrz)
+
+            set_attrs_bytes(dset, attrz)
+
+        
+        return dset
+
+
             #TODO use this instead
             #             modify(name, value)
             # Change the value of an attribute while preserving its type and shape. Unlike AttributeManager.__setitem__(), if the attribute already exists, only its value will be changed. This can be useful for interacting with externally generated files, where the type and shape must not be altered.
@@ -1517,13 +1592,13 @@ class xpd():
             #         st = replaceMulti(rep,st)
             #         grup.attrs.modify(atr,st.encode())
         return tbl
-    def tohdfFile(DF,HDFfile,pathToParentGroup,HDFdsName,
+    def tohdfFile(DF,HDFfile,pathToParentGroup,HDFtblName,
         attrz=None,fillvalue=-9999,**kwargs):
         '''tohdf but with unopen! HDF file Path specified\n
         xpd.tohdfFile(df,hdfFile,"/Geometry/Land Cover (Manning's n)",'Calibration Table')
         '''
         with h5py.File(HDFfile,'r+') as hdf:
-            xpd.tohdf(DF,hdf[pathToParentGroup],HDFdsName,
+            xpd.tohdf(DF,hdf[pathToParentGroup],HDFtblName,
                 attrz=attrz,fillvalue=fillvalue,**kwargs)
 
     def readhdfAttrs(hdfattrs):
@@ -1608,9 +1683,9 @@ class xpd():
             df=df.pivot_table(grupby,pivotCols,aggfunc=aggfunk)
         else:
             df=df.groupby(grupby,level=lvl)
-            df=df.agg(aggfunk).applymap(list)#.reset_index() TEST commenting this may mess up other functions depending on xpd.consol!!!
+            df=df.agg(aggfunk).map(list)#.reset_index() TEST commenting this may mess up other functions depending on xpd.consol!!!
         #if how == 'list':
-            #df=df.agg(lambda x: tuple(x)).applymap(list).reset_index() #why reset index?
+            #df=df.agg(lambda x: tuple(x)).map(list).reset_index() #why reset index?
         #else:
         return df
     def explode(df, lst_cols, fill_value='', preserve_index=True):
